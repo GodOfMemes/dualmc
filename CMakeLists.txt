@@ -1,18 +1,19 @@
-cmake_minimum_required(VERSION 3.9)
-project (dualmc)
+cmake_minimum_required(VERSION 3.28)
+project(dualmc)
 
-include_directories("${CMAKE_SOURCE_DIR}/include/")
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
-set(EXAMPLE_APP_SOURCES
-    apps/example/example.cpp
-    apps/example/main.cpp
-)
+if(PROJECT_IS_TOP_LEVEL)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/bin/lib")
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/bin")
+endif()
 
-set(GENTABLES_APP_SOURCES
-    apps/gentables/gentables.cpp
-    apps/gentables/main.cpp
-)
+add_library(dualmc INTERFACE)
+target_include_directories(dualmc INTERFACE "${CMAKE_SOURCE_DIR}/include")
 
-# build application
-add_executable(dmc ${EXAMPLE_APP_SOURCES})
-add_executable(gentables ${GENTABLES_APP_SOURCES})
+if(PROJECT_IS_TOP_LEVEL)
+    add_subdirectory(examples)
+endif()

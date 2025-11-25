@@ -1,3 +1,10 @@
+.cache/
+.vs/
+.idea/
+
+[Bb]in/
+[Bb]uild/
+
 dmc
 dmc.exe
 gentables
