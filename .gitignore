@@ -5,10 +5,6 @@
 [Bb]in/
 [Bb]uild/
 
-dmc
-dmc.exe
-gentables
-gentables.exe
 *.obj
 *.o
 *.dep

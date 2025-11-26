@@ -101,11 +101,8 @@ private:
         
     };
 
-    /// array of vertices for the extracted surface
-    std::vector<dualmc::Vertex> vertices;
-    
-    /// array of quad indices for the extracted surface
-    std::vector<dualmc::Quad> quads;
+    // extracted surface
+    dualmc::Mesh mesh{};
 };
 
 //------------------------------------------------------------------------------
@@ -228,12 +225,12 @@ void DualMCExample::computeSurface(float const iso, bool const generateManifold)
     // construct iso surface
     if(volume.bitDepth == 8) {
         dualmc::Mesher<uint8_t> builder;
-        builder.build(&volume.data.front(), volume.dimX, volume.dimY, volume.dimZ,
-            iso * std::numeric_limits<uint8_t>::max(), generateManifold, vertices, quads);
+        mesh = builder.Build(volume.data, {volume.dimX, volume.dimY, volume.dimZ},
+            iso * std::numeric_limits<uint8_t>::max(), generateManifold, dualmc::Topology::Quads);
     } else if(volume.bitDepth == 16) {
         dualmc::Mesher<uint16_t> builder;
-        builder.build((uint16_t const*)&volume.data.front(), volume.dimX, volume.dimY, volume.dimZ,
-            iso * std::numeric_limits<uint16_t>::max(), generateManifold, vertices, quads);
+        mesh = builder.Build({(uint16_t*)&volume.data.front(), volume.data.size() / sizeof(uint16_t)}, {volume.dimX, volume.dimY, volume.dimZ},
+            iso * std::numeric_limits<uint16_t>::max(), generateManifold, dualmc::Topology::Quads);
     } else {
         std::cerr << "Invalid volume bit depth" << std::endl;
         return;
@@ -399,7 +396,7 @@ bool DualMCExample::loadRawFile(std::string const & fileName, int32_t dimX, int3
 void DualMCExample::writeOBJ(std::string const & fileName) const {
     std::cout << "Writing OBJ file" << std::endl;
     // check if we actually have an ISO surface
-    if(vertices.size () == 0 || quads.size() == 0) {
+    if(mesh.vertices.size () == 0 || mesh.indices.size() == 0) {
         std::cout << "No ISO surface generated. Skipping OBJ generation." << std::endl;
         return;
     }
@@ -411,17 +408,19 @@ void DualMCExample::writeOBJ(std::string const & fileName) const {
         return;
     }
     
-    std::cout << "Generating OBJ mesh with " << vertices.size() << " vertices and "
-      << quads.size() << " quads" << std::endl;
+    std::cout << "Generating OBJ mesh with " << mesh.vertices.size() << " vertices and "
+      << mesh.indices.size() << " quads" << std::endl;
     
     // write vertices
-    for(auto const & v : vertices) {
-        file << "v " << v.x << ' ' << v.y << ' ' << v.z << '\n';
+    for(auto const & v : mesh.vertices) 
+    {
+        file << "v " << v.position[0] << ' ' << v.position[1] << ' ' << v.position[3] << '\n';
     }
     
     // write quad indices
-    for(auto const & q : quads) {
-        file << "f " << (q.i0+1) << ' ' << (q.i1+1) << ' ' << (q.i2+1) << ' ' << (q.i3+1) << '\n';
+    for(size_t i = 0; i < mesh.indices.size(); i+=4)
+    {
+        file << "f " << (mesh.indices[i + 0] + 1) << ' ' << (mesh.indices[i + 1] + 1) << ' ' << (mesh.indices[i + 2] + 1) << ' ' << (mesh.indices[i + 3] + 1 ) << '\n';
     }
     
     file.close();
