@@ -226,11 +226,11 @@ void DualMCExample::computeSurface(float const iso, bool const generateManifold)
     if(volume.bitDepth == 8) {
         dualmc::Mesher<uint8_t> builder;
         mesh = builder.Build(volume.data, {volume.dimX, volume.dimY, volume.dimZ},
-            iso * std::numeric_limits<uint8_t>::max(), generateManifold, dualmc::Topology::Quads);
+            iso * std::numeric_limits<uint8_t>::max(), dualmc::Topology::Quads);
     } else if(volume.bitDepth == 16) {
         dualmc::Mesher<uint16_t> builder;
         mesh = builder.Build({(uint16_t*)&volume.data.front(), volume.data.size() / sizeof(uint16_t)}, {volume.dimX, volume.dimY, volume.dimZ},
-            iso * std::numeric_limits<uint16_t>::max(), generateManifold, dualmc::Topology::Quads);
+            iso * std::numeric_limits<uint16_t>::max(), dualmc::Topology::Quads);
     } else {
         std::cerr << "Invalid volume bit depth" << std::endl;
         return;
@@ -409,12 +409,12 @@ void DualMCExample::writeOBJ(std::string const & fileName) const {
     }
     
     std::cout << "Generating OBJ mesh with " << mesh.vertices.size() << " vertices and "
-      << mesh.indices.size() << " quads" << std::endl;
+      << mesh.indices.size() / 4 << " quads" << std::endl;
     
     // write vertices
     for(auto const & v : mesh.vertices) 
     {
-        file << "v " << v.position[0] << ' ' << v.position[1] << ' ' << v.position[3] << '\n';
+        file << "v " << v.position[0] << ' ' << v.position[1] << ' ' << v.position[2] << '\n';
     }
     
     // write quad indices

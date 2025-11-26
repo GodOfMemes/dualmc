@@ -26,6 +26,27 @@ namespace dualmc
 	using float3 = std::array<float, 3>;
 	using int3 = std::array<int32_t, 3>;
 
+    constexpr float3 operator+(const float3& a, const float3& b) 
+    {
+        return {a[0] + b[0], a[1] + b[1], a[2] + b[2]};
+    }
+    
+    constexpr float3 operator-(const float3& a, const float3& b) 
+    {
+        return {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
+    }
+
+    constexpr float3 operator*(const float3& a, float s) 
+    {
+        return {a[0] * s, a[1] * s, a[2] * s};
+    }
+
+    constexpr float3& operator+=(float3& a, const float3& b) 
+    {
+        a[0] += b[0]; a[1] += b[1]; a[2] += b[2];
+        return a;
+    }
+
 	struct Vertex
 	{
         Vertex() = default;
@@ -55,47 +76,39 @@ namespace dualmc
     /// The class optionally can guarantee manifold meshes by taking the Manifold
     /// Dual Marching Cubes approach from Rephael Wenger as described in
     /// chapter 3.3.5 of his book "Isosurfaces: Geometry, Topology, and Algorithms".
-    template<class T> 
+    template<class T>
+    requires std::is_arithmetic_v<T>
 	class Mesher 
     {
     public:
-		// typedefs
-		typedef T VolumeDataType;
+		using VolumeDataType = T;
 
 		/// Extracts the iso surface for a given volume and iso value.
 		/// Output is a list of vertices and a list of indices, which connect
 		/// vertices to quads or triangles.
-		Mesh Build(
+		[[nodiscard]] Mesh Build(
 			const std::span<VolumeDataType>& data, 
 			const int3& dimension, 
-			VolumeDataType iso, 
-			bool generateManifold,
+			VolumeDataType iso,
 			Topology topology = Topology::Triangles)
 		{
 			assert(!(dimension[0] < 0 || dimension[1] < 0 || dimension[2] < 0) && "Dimension is invalid");
             assert(!data.empty() && "Volume data is empty");
             assert(data.size() >= (size_t)(dimension[0] * dimension[1] * dimension[2]) && "Volume data is smaller than extent");
 
-			volume = data;
-			dims = dimension;
-			this->generateManifold = generateManifold;
+            Context ctx{
+                .volume = data,
+                .extent = dimension,
+                .iso = iso,
+                .topology = topology,
+                .mesh = Mesh{}
+            };
 			
-			Mesh mesh{};
-			BuildInternal(iso, topology, mesh);
-			return mesh;
+			BuildInternal( ctx);
+			return ctx.mesh;
 		}
 
     private:
-		/// convenience volume extent array for x-,y-, and z-dimension
-        int3 dims;
-
-        /// convenience volume data point
-        std::span<VolumeDataType> volume;
-        
-        /// store whether the manifold dual marching cubes algorithm should be
-        /// applied.
-        bool generateManifold;
-        
         /// Dual point key structure for hashing of shared vertices
         struct DualPointKey 
 		{
@@ -104,10 +117,7 @@ namespace dualmc
             int32_t linearizedCellID;
             int32_t pointCode;
             /// Equal operator for unordered map
-            bool operator==(DualPointKey const& other) const
-            {
-              return linearizedCellID == other.linearizedCellID && pointCode == other.pointCode;
-            }
+            bool operator==(DualPointKey const& other) const = default;
         };
         
         /// Functor for dual point key hash generation
@@ -118,9 +128,16 @@ namespace dualmc
                 return size_t(k.linearizedCellID) | (size_t(k.pointCode) << 32u);
             }
         };
-        
-        /// Hash map for shared vertex index computations
-        std::unordered_map<DualPointKey,uint32_t,DualPointKeyHash> pointToIndex;
+
+        struct Context
+        {
+            std::span<VolumeDataType> volume;
+            int3 extent;
+            VolumeDataType iso;
+            Topology topology;
+            Mesh mesh;
+            std::unordered_map<DualPointKey,uint32_t,DualPointKeyHash> pointToIndex;
+        };
 
         /*
          * Static lookup tables needed for (manifold) dual marching cubes
@@ -179,7 +196,7 @@ namespace dualmc
          * Enum with edge codes for a 12-bit voxel edge mask to indicate
          * grid edges which intersect the ISO surface of classic marching cubes
         */
-        enum DMCEdgeCode 
+        enum DMCEdgeCode : uint32_t
         {
             EDGE0 = 1,
             EDGE1 = 1 << 1,
@@ -192,8 +209,7 @@ namespace dualmc
             EDGE8 = 1 << 8,
             EDGE9 = 1 << 9,
             EDGE10 = 1 << 10,
-            EDGE11 = 1 << 11,
-            FORCE_32BIT = 0xffffffff
+            EDGE11 = 1 << 11
         };
 
         /*
@@ -202,8 +218,7 @@ namespace dualmc
          * A marching cube case produces up to four faces and ,thus, up to four
          * dual points.
         */
-        inline static int32_t dualPointsList[256][4] = 
-        {
+        static constexpr std::array<std::array<int32_t, 4>, 256> dualPointsList{{
             {0, 0, 0, 0}, // 0
             {EDGE0 | EDGE3 | EDGE8, 0, 0, 0}, // 1
             {EDGE0 | EDGE1 | EDGE9, 0, 0, 0}, // 2
@@ -460,7 +475,7 @@ namespace dualmc
             {EDGE0 | EDGE1 | EDGE9, 0, 0, 0}, // 253
             {EDGE0 | EDGE3 | EDGE8, 0, 0, 0}, // 254
             {0, 0, 0, 0} // 255
-        };
+        }};
         
         /*
          * Table which encodes the ambiguous face of cube configurations, which
@@ -470,8 +485,7 @@ namespace dualmc
          * The first bit of each value actually encodes a positive or negative
          * direction while the second and third bit enumerate the axis.
         */
-        inline static uint8_t problematicConfigs[256] = 
-        {
+        static constexpr std::array<uint8_t, 256> problematicConfigs{
             255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,
             255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,
             255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,
@@ -490,13 +504,13 @@ namespace dualmc
             255,255,255,255,255,255,4,255,255,4,255,255,255,255,255,255
         };
 
-		void BuildInternal(VolumeDataType iso, Topology topology, Mesh& mesh)
+		void BuildInternal(Context& ctx)
 		{
-			int32_t reducedX = dims[0] - 2;
-			int32_t reducedY = dims[1] - 2;
-			int32_t reducedZ = dims[2] - 2;
+			int32_t reducedX = ctx.extent[0] - 2;
+			int32_t reducedY = ctx.extent[1] - 2;
+			int32_t reducedZ = ctx.extent[2] - 2;
 
-			pointToIndex.clear();
+			ctx.pointToIndex.clear();
 
 			// iterate voxels
 			for (int32_t z = 0; z < reducedZ; ++z)
@@ -508,13 +522,11 @@ namespace dualmc
 						// construct quads for x edge
 						if (z > 0 && y > 0) 
 						{
-							auto [entering, exiting] = GetStatus(iso,x, y, z, 1, 0, 0);
+							auto [entering, exiting] = GetStatus(ctx,x, y, z, 1, 0, 0);
 							if (entering || exiting) 
 							{
 								ConstructFace(
-									iso,
-									topology,
-                                    mesh,
+									ctx,
                                     entering,
                                     {
                                         int3{x, y, z}, 
@@ -530,13 +542,11 @@ namespace dualmc
 						// construct quads for y edge
 						if (z > 0 && x > 0) 
 						{
-							auto [entering, exiting] = GetStatus(iso,x, y, z, 0, 1, 0);
+							auto [entering, exiting] = GetStatus(ctx,x, y, z, 0, 1, 0);
 							if (entering || exiting) 
 							{
 								ConstructFace(
-                                    iso,
-									topology,
-                                    mesh,
+                                    ctx,
                                     exiting,
                                     {
                                         int3{x, y, z}, 
@@ -552,13 +562,11 @@ namespace dualmc
 						// construct quads for z edge
 						if (x > 0 && y > 0) 
 						{
-							auto [entering, exiting] = GetStatus(iso,x, y, z, 0, 0, 1);
+							auto [entering, exiting] = GetStatus(ctx,x, y, z, 0, 0, 1);
 							if (entering || exiting) 
 							{
 								ConstructFace(
-                                    iso,
-									topology,
-                                    mesh,
+                                    ctx,
                                     exiting,
                                     {
                                         int3{x, y, z}, 
@@ -577,25 +585,25 @@ namespace dualmc
 
 		/// get the 8-bit in-out mask for the voxel corners of the cell cube at (cx,cy,cz)
 		/// and the given iso value
-		int32_t GetCellCode(const int3& cell, VolumeDataType iso) const
+		int32_t GetCellCode(const int3& cell, const Context& ctx) const noexcept
 		{
 			// determine for each cube corner if it is outside or inside
 			int32_t code = 0;
-			if (volume[gA(cell[0], cell[1], cell[2])] >= iso)
+			if (ctx.volume[gA(cell[0], cell[1], cell[2],ctx.extent)] >= ctx.iso)
 				code |= 1;
-			if (volume[gA(cell[0] + 1, cell[1], cell[2])] >= iso)
+			if (ctx.volume[gA(cell[0] + 1, cell[1], cell[2],ctx.extent)] >= ctx.iso)
 				code |= 2;
-			if (volume[gA(cell[0], cell[1] + 1, cell[2])] >= iso)
+			if (ctx.volume[gA(cell[0], cell[1] + 1, cell[2],ctx.extent)] >= ctx.iso)
 				code |= 4;
-			if (volume[gA(cell[0] + 1, cell[1] + 1, cell[2])] >= iso)
+			if (ctx.volume[gA(cell[0] + 1, cell[1] + 1, cell[2],ctx.extent)] >= ctx.iso)
 				code |= 8;
-			if (volume[gA(cell[0], cell[1], cell[2] + 1)] >= iso)
+			if (ctx.volume[gA(cell[0], cell[1], cell[2] + 1,ctx.extent)] >= ctx.iso)
 				code |= 16;
-			if (volume[gA(cell[0] + 1, cell[1], cell[2] + 1)] >= iso)
+			if (ctx.volume[gA(cell[0] + 1, cell[1], cell[2] + 1,ctx.extent)] >= ctx.iso)
 				code |= 32;
-			if (volume[gA(cell[0], cell[1] + 1, cell[2] + 1)] >= iso)
+			if (ctx.volume[gA(cell[0], cell[1] + 1, cell[2] + 1,ctx.extent)] >= ctx.iso)
 				code |= 64;
-			if (volume[gA(cell[0] + 1, cell[1] + 1, cell[2] + 1)] >= iso)
+			if (ctx.volume[gA(cell[0] + 1, cell[1] + 1, cell[2] + 1,ctx.extent)] >= ctx.iso)
 				code |= 128;
 			return code;
 		}
@@ -605,55 +613,51 @@ namespace dualmc
 		/// corresponds to the dual point.
 		/// This is also where the manifold dual marching cubes algorithm is
 		/// implemented.
-		int32_t GetDualPointCode(const int3& cell, VolumeDataType iso, DMCEdgeCode edge) const
+		int32_t GetDualPointCode(const int3& cell, const Context& ctx, DMCEdgeCode edge) const
 		{
-			int32_t cubeCode = GetCellCode(cell, iso);
+			int32_t cubeCode = GetCellCode(cell, ctx);
 
-			// is manifold dual marching cubes desired?
-			if (generateManifold) 
-			{
-				// The Manifold Dual Marching Cubes approach from Rephael Wenger as described in
-				// chapter 3.3.5 of his book "Isosurfaces: Geometry, Topology, and Algorithms"
-				// is implemente here.
-				// If a problematic C16 or C19 configuration shares the ambiguous face 
-				// with another C16 or C19 configuration we simply invert the cube code
-				// before looking up dual points. Doing this for these pairs ensures
-				// manifold meshes.
-				// But this removes the dualism to marching cubes.
+            // The Manifold Dual Marching Cubes approach from Rephael Wenger as described in
+            // chapter 3.3.5 of his book "Isosurfaces: Geometry, Topology, and Algorithms"
+            // is implemente here.
+            // If a problematic C16 or C19 configuration shares the ambiguous face 
+            // with another C16 or C19 configuration we simply invert the cube code
+            // before looking up dual points. Doing this for these pairs ensures
+            // manifold meshes.
+            // But this removes the dualism to marching cubes.
 
-				// check if we have a potentially problematic configuration
-				uint8_t direction = problematicConfigs[uint8_t(cubeCode)];
-				// If the direction code is in {0,...,5} we have a C16 or C19 configuration.
-				if (direction != 255) 
-				{
-					// We have to check the neighboring cube, which shares the ambiguous
-					// face. For this we decode the direction. This could also be done
-					// with another lookup table.
-					// copy current cube coordinates into an array.
-					int3 neighborCoords = cell;
-					// get the dimension of the non-zero coordinate axis
-					uint32_t component = direction >> 1;
-					// get the sign of the direction
-					int32_t delta = (direction & 1) == 1 ? 1 : -1;
-					// modify the correspong cube coordinate
-					neighborCoords[component] += delta;
-					// have we left the volume in this direction?
-					if (neighborCoords[component] >= 0 && neighborCoords[component] < (dims[component] - 1)) 
-					{
-						// get the cube configuration of the relevant neighbor
-						int32_t neighborCubeCode = GetCellCode(neighborCoords, iso);
-						// Look up the neighbor configuration ambiguous face direction.
-						// If the direction is valid we have a C16 or C19 neighbor.
-						// As C16 and C19 have exactly one ambiguous face this face is
-						// guaranteed to be shared for the pair.
-						if (problematicConfigs[uint8_t(neighborCubeCode)] != 255) 
-						{
-							// replace the cube configuration with its inverse.
-							cubeCode ^= 0xff;
-						}
-					}
-				}
-			}
+            // check if we have a potentially problematic configuration
+            uint8_t direction = problematicConfigs[uint8_t(cubeCode)];
+            // If the direction code is in {0,...,5} we have a C16 or C19 configuration.
+            if (direction != 255) 
+            {
+                // We have to check the neighboring cube, which shares the ambiguous
+                // face. For this we decode the direction. This could also be done
+                // with another lookup table.
+                // copy current cube coordinates into an array.
+                int3 neighborCoords = cell;
+                // get the dimension of the non-zero coordinate axis
+                uint32_t component = direction >> 1;
+                // get the sign of the direction
+                int32_t delta = (direction & 1) == 1 ? 1 : -1;
+                // modify the correspong cube coordinate
+                neighborCoords[component] += delta;
+                // have we left the volume in this direction?
+                if (neighborCoords[component] >= 0 && neighborCoords[component] < (ctx.extent[component] - 1)) 
+                {
+                    // get the cube configuration of the relevant neighbor
+                    int32_t neighborCubeCode = GetCellCode(neighborCoords, ctx);
+                    // Look up the neighbor configuration ambiguous face direction.
+                    // If the direction is valid we have a C16 or C19 neighbor.
+                    // As C16 and C19 have exactly one ambiguous face this face is
+                    // guaranteed to be shared for the pair.
+                    if (problematicConfigs[uint8_t(neighborCubeCode)] != 255) 
+                    {
+                        // replace the cube configuration with its inverse.
+                        cubeCode ^= 0xff;
+                    }
+                }
+            }
 
 			for (int32_t i = 0; i < 4; ++i)
 			{
@@ -666,205 +670,163 @@ namespace dualmc
 		}
 
 		/// Given a dual point code and iso value, compute the dual point.
-		void CalculateDualPoint(const int3& cell, VolumeDataType iso, int32_t pointCode, Vertex &v) const
+		void CalculateDualPoint(const int3& cell, const Context& ctx, int32_t pointCode, Vertex &v) const
 		{
 			// compute the dual point as the mean of the face vertices belonging to the
 			// original marching cubes face
-			Vertex p;
-			p.position = {0,0,0};
+			float3 p{0,0,0};
 			int32_t points = 0;
 
+            auto val = [&](int32_t dx, int32_t dy, int32_t dz) 
+            {
+                return (float)ctx.volume[gA(cell[0] + dx, cell[1] + dy, cell[2] + dz, ctx.extent)];
+            };
+
+            auto interpolate = [&](float valA, float valB) 
+            {
+                 return ((float)ctx.iso - valA) / (valB - valA);
+            };
+
 			// sum edge intersection vertices using the point code
-			if (pointCode & EDGE0) 
-			{
-				p.position[0] += ((float)iso - (float)volume[gA(cell[0], cell[1], cell[2])]) / ((float)volume[gA(cell[0] + 1, cell[1], cell[2])] - (float)volume[gA(cell[0], cell[1], cell[2])]);
-				points++;
-			}
+			struct EdgeDef {
+                int8_t axis;      // 0=x, 1=y, 2=z
+                int8_t oX, oY, oZ; // Origin coordinates
+            };
 
-			if (pointCode & EDGE1) 
-			{
-				p.position[0] += 1.0f;
-				p.position[2] += ((float)iso - (float)volume[gA(cell[0] + 1, cell[1], cell[2])]) / ((float)volume[gA(cell[0] + 1, cell[1], cell[2] + 1)] - (float)volume[gA(cell[0] + 1, cell[1], cell[2])]);
-				points++;
-			}
+            // Table mapping edge index (0-11) to axis and origin
+            static constexpr std::array<EdgeDef, 12> edgeTable = {{
+                {0, 0,0,0}, {2, 1,0,0}, {0, 0,0,1}, {2, 0,0,0}, // Edges 0-3
+                {0, 0,1,0}, {2, 1,1,0}, {0, 0,1,1}, {2, 0,1,0}, // Edges 4-7
+                {1, 0,0,0}, {1, 1,0,0}, {1, 1,0,1}, {1, 0,0,1}  // Edges 8-11
+            }};
 
-			if (pointCode & EDGE2) 
-			{
-				p.position[0] += ((float)iso - (float)volume[gA(cell[0], cell[1], cell[2] + 1)]) / ((float)volume[gA(cell[0] + 1, cell[1], cell[2] + 1)] - (float)volume[gA(cell[0], cell[1], cell[2] + 1)]);
-				p.position[2] += 1.0f;
-				points++;
-			}
+            for (int i = 0; i < 12; ++i) 
+            {
+                if (pointCode & (1 << i)) 
+                {
+                    const auto& edge = edgeTable[i];
+                    
+                    // Value at edge origin
+                    float v1 = val(edge.oX, edge.oY, edge.oZ);
+                    
+                    // Value at edge end (origin + axis direction)
+                    float v2 = val(
+                        edge.oX + (edge.axis == 0), 
+                        edge.oY + (edge.axis == 1), 
+                        edge.oZ + (edge.axis == 2)
+                    );
 
-			if (pointCode & EDGE3) 
-			{
-				p.position[2] += ((float)iso - (float)volume[gA(cell[0], cell[1], cell[2])]) / ((float)volume[gA(cell[0], cell[1], cell[2] + 1)] - (float)volume[gA(cell[0], cell[1], cell[2])]);
-				points++;
-			}
-
-			if (pointCode & EDGE4) 
-			{
-				p.position[0] += ((float)iso - (float)volume[gA(cell[0], cell[1] + 1, cell[2])]) / ((float)volume[gA(cell[0] + 1, cell[1] + 1, cell[2])] - (float)volume[gA(cell[0], cell[1] + 1, cell[2])]);
-				p.position[1] += 1.0f;
-				points++;
-			}
-
-			if (pointCode & EDGE5) 
-			{
-				p.position[0] += 1.0f;
-				p.position[2] += ((float)iso - (float)volume[gA(cell[0] + 1, cell[1] + 1, cell[2])]) / ((float)volume[gA(cell[0] + 1, cell[1] + 1, cell[2] + 1)] - (float)volume[gA(cell[0] + 1, cell[1] + 1, cell[2])]);
-				p.position[1] += 1.0f;
-				points++;
-			}
-
-			if (pointCode & EDGE6) 
-			{
-				p.position[0] += ((float)iso - (float)volume[gA(cell[0], cell[1] + 1, cell[2] + 1)]) / ((float)volume[gA(cell[0] + 1, cell[1] + 1, cell[2] + 1)] - (float)volume[gA(cell[0], cell[1] + 1, cell[2] + 1)]);
-				p.position[2] += 1.0f;
-				p.position[1] += 1.0f;
-				points++;
-			}
-
-			if (pointCode & EDGE7) 
-			{
-				p.position[2] += ((float)iso - (float)volume[gA(cell[0], cell[1] + 1, cell[2])]) / ((float)volume[gA(cell[0], cell[1] + 1, cell[2] + 1)] - (float)volume[gA(cell[0], cell[1] + 1, cell[2])]);
-				p.position[1] += 1.0f;
-				points++;
-			}
-
-			if (pointCode & EDGE8) 
-			{
-				p.position[1] += ((float)iso - (float)volume[gA(cell[0], cell[1], cell[2])]) / ((float)volume[gA(cell[0], cell[1] + 1, cell[2])] - (float)volume[gA(cell[0], cell[1], cell[2])]);
-				points++;
-			}
-
-			if (pointCode & EDGE9) 
-			{
-				p.position[0] += 1.0f;
-				p.position[1] += ((float)iso - (float)volume[gA(cell[0] + 1, cell[1], cell[2])]) / ((float)volume[gA(cell[0] + 1, cell[1] + 1, cell[2])] - (float)volume[gA(cell[0] + 1, cell[1], cell[2])]);
-				points++;
-			}
-
-			if (pointCode & EDGE10) 
-			{
-				p.position[0] += 1.0f;
-				p.position[1] += ((float)iso - (float)volume[gA(cell[0] + 1, cell[1], cell[2] + 1)]) / ((float)volume[gA(cell[0] + 1, cell[1] + 1, cell[2] + 1)] - (float)volume[gA(cell[0] + 1, cell[1], cell[2] + 1)]);
-				p.position[2] += 1.0f;
-				points++;
-			}
-
-			if (pointCode & EDGE11) 
-			{
-				p.position[2] += 1.0f;
-				p.position[1] += ((float)iso - (float)volume[gA(cell[0], cell[1], cell[2] + 1)]) / ((float)volume[gA(cell[0], cell[1] + 1, cell[2] + 1)] - (float)volume[gA(cell[0], cell[1], cell[2] + 1)]);
-				points++;
-			}
+                    // Base position is the edge origin
+                    float3 pos = {static_cast<float>(edge.oX), static_cast<float>(edge.oY), static_cast<float>(edge.oZ)};
+                    
+                    // Add interpolated offset along the axis
+                    pos[edge.axis] += interpolate(v1, v2);
+                    
+                    p = p + pos;
+                    points++;
+                }
+            }
 
 			// divide by number of accumulated points
 			float invPoints = 1.0f / (float)points;
-			p.position[0] *= invPoints;
-			p.position[1] *= invPoints;
-			p.position[2] *= invPoints;
+			p = p * invPoints;
 
 			v.position = {
-				static_cast<float>(cell[0]) + p.position[0], 
-				static_cast<float>(cell[1]) + p.position[1], 
-				static_cast<float>(cell[2]) + p.position[2]
+				static_cast<float>(cell[0]) + p[0], 
+				static_cast<float>(cell[1]) + p[1], 
+				static_cast<float>(cell[2]) + p[2]
 			};
 		}
 
-		/// Get the shared index of a dual point which is uniquly identified by its
-		/// cell cube index and a cube edge. The dual point is computed,
-		/// if it has not been computed before.
-		uint32_t GetSharedDualPointIndex(const int3& cell, VolumeDataType iso, DMCEdgeCode edge, std::vector<Vertex>& vertices)
+        /*
+		* Get the shared index of a dual point which is uniquly identified by its
+		* cell cube index and a cube edge. The dual point is computed,
+		* if it has not been computed before.
+        */
+		uint32_t GetSharedDualPointIndex(const int3& cell, Context& ctx, DMCEdgeCode edge)
 		{
-			// create a key for the dual point from its linearized cell ID and point code
 			DualPointKey key{
-				.linearizedCellID = gA(cell),
-				.pointCode = GetDualPointCode(cell, iso, edge)
+				.linearizedCellID = gA(cell, ctx.extent),
+				.pointCode = GetDualPointCode(cell, ctx, edge)
 			};
 
-			// have we already computed the dual point?
-			auto iterator = pointToIndex.find(key);
-			if (iterator != pointToIndex.end()) 
-			{
-				// just return the dual point index
-				return iterator->second;
-			}
-			else 
-			{
-				// create new vertex and vertex id
-				uint32_t newVertexId = static_cast<uint32_t>(vertices.size());
-				vertices.emplace_back();
-				CalculateDualPoint(cell, iso, key.pointCode, vertices.back());
-				// insert vertex ID into map and also return it
-				pointToIndex[key] = newVertexId;
-				return newVertexId;
-			}
+            auto [iter, inserted] = ctx.pointToIndex.try_emplace(key, static_cast<uint32_t>(ctx.mesh.vertices.size()));
+            
+            if (inserted) 
+            {
+                ctx.mesh.vertices.emplace_back();
+                CalculateDualPoint(cell, ctx,key.pointCode, ctx.mesh.vertices.back());
+            }
+            
+            return iter->second;
 		}
 		
 		/// Compute a linearized cell cube index.
-		int32_t gA(const int3& cell) const
+		int32_t gA(const int3& cell, const int3& dims) const noexcept
 		{
-			return gA(cell[0],cell[1],cell[2]);
+			return gA(cell[0],cell[1],cell[2], dims);
 		}
 
-		int32_t gA(int32_t x, int32_t y, int32_t z) const
+		int32_t gA(int32_t x, int32_t y, int32_t z, const int3& dims) const noexcept
 		{
 			return x + dims[0] * (y + dims[1] * z);
 		}
 
-		std::pair<bool,bool> GetStatus(VolumeDataType iso,int32_t x, int32_t y, int32_t z, int32_t xOffset, int32_t yOffset, int32_t zOffset)
+		inline std::pair<bool,bool> GetStatus(const Context& ctx,int32_t x, int32_t y, int32_t z, int32_t xOffset, int32_t yOffset, int32_t zOffset) const
 		{
-			bool entering = volume[gA(x, y, z)] >= iso && volume[gA(x + xOffset, y + yOffset, z + zOffset)] < iso;
-			bool exiting = volume[gA(x, y, z)] < iso && volume[gA(x + xOffset, y + yOffset, z + zOffset)] >= iso;
+            auto vol1 = ctx.volume[gA(x, y, z,ctx.extent)];
+            auto vol2 = ctx.volume[gA(x + xOffset, y + yOffset, z + zOffset,ctx.extent)];
+
+			bool entering = vol1 >= ctx.iso && vol2 < ctx.iso;
+			bool exiting = vol1 < ctx.iso && vol2 >= ctx.iso;
 			return std::pair(entering, exiting);
 		}
 
-		void ConstructFace(VolumeDataType iso, Topology topology, Mesh& mesh, bool cond,const std::array<int3, 4>& cells, const std::array<DMCEdgeCode,4>& edges) noexcept
+		void ConstructFace(Context& ctx, bool cond,const std::array<int3, 4>& cells, const std::array<DMCEdgeCode,4>& edges)
         {
-            uint32_t i0 = GetSharedDualPointIndex(cells[0], iso, edges[0], mesh.vertices);
-            uint32_t i1 = GetSharedDualPointIndex(cells[1], iso, edges[1], mesh.vertices);
-            uint32_t i2 = GetSharedDualPointIndex(cells[2], iso, edges[2], mesh.vertices);
-            uint32_t i3 = GetSharedDualPointIndex(cells[3], iso, edges[3], mesh.vertices);
+            uint32_t i0 = GetSharedDualPointIndex(cells[0], ctx, edges[0]);
+            uint32_t i1 = GetSharedDualPointIndex(cells[1], ctx, edges[1]);
+            uint32_t i2 = GetSharedDualPointIndex(cells[2], ctx, edges[2]);
+            uint32_t i3 = GetSharedDualPointIndex(cells[3], ctx, edges[3]);
 
             if (cond)
             {
-                if(topology == Topology::Quads)
+                if(ctx.topology == Topology::Quads)
                 {
-                    mesh.indices.emplace_back(i0);
-                    mesh.indices.emplace_back(i1);
-                    mesh.indices.emplace_back(i2);
-                    mesh.indices.emplace_back(i3);
+                    ctx.mesh.indices.emplace_back(i0);
+                    ctx.mesh.indices.emplace_back(i1);
+                    ctx.mesh.indices.emplace_back(i2);
+                    ctx.mesh.indices.emplace_back(i3);
                 }
                 else 
                 {
-                    mesh.indices.emplace_back(i0);
-                    mesh.indices.emplace_back(i1);
-                    mesh.indices.emplace_back(i2);
+                    ctx.mesh.indices.emplace_back(i0);
+                    ctx.mesh.indices.emplace_back(i1);
+                    ctx.mesh.indices.emplace_back(i2);
 
-                    mesh.indices.emplace_back(i2);
-                    mesh.indices.emplace_back(i3);
-                    mesh.indices.emplace_back(i0);
+                    ctx.mesh.indices.emplace_back(i2);
+                    ctx.mesh.indices.emplace_back(i3);
+                    ctx.mesh.indices.emplace_back(i0);
                 }
             }
             else
             {
-                if(topology == Topology::Quads)
+                if(ctx.topology == Topology::Quads)
                 {
-                    mesh.indices.emplace_back(i0);
-                    mesh.indices.emplace_back(i3);
-                    mesh.indices.emplace_back(i2);
-                    mesh.indices.emplace_back(i1);
+                    ctx.mesh.indices.emplace_back(i0);
+                    ctx.mesh.indices.emplace_back(i3);
+                    ctx.mesh.indices.emplace_back(i2);
+                    ctx.mesh.indices.emplace_back(i1);
                 }
                 else 
                 {
-                    mesh.indices.emplace_back(i2);
-                    mesh.indices.emplace_back(i1);
-                    mesh.indices.emplace_back(i0);
+                    ctx.mesh.indices.emplace_back(i2);
+                    ctx.mesh.indices.emplace_back(i1);
+                    ctx.mesh.indices.emplace_back(i0);
 
-                    mesh.indices.emplace_back(i0);
-                    mesh.indices.emplace_back(i3);
-                    mesh.indices.emplace_back(i2);
+                    ctx.mesh.indices.emplace_back(i0);
+                    ctx.mesh.indices.emplace_back(i3);
+                    ctx.mesh.indices.emplace_back(i2);
                 }
             }
         };
