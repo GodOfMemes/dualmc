@@ -506,11 +506,13 @@ namespace dualmc
 
 		void BuildInternal(Context& ctx)
 		{
-			int32_t reducedX = ctx.extent[0] - 2;
-			int32_t reducedY = ctx.extent[1] - 2;
-			int32_t reducedZ = ctx.extent[2] - 2;
+            int32_t dimX = ctx.extent[0] - 2;
+			int32_t dimY = ctx.extent[1] - 2;
+			int32_t dimZ = ctx.extent[2] - 2;
 
-			ctx.pointToIndex.clear();
+			int32_t reducedX = dimX - 2;
+			int32_t reducedY = dimY - 2;
+			int32_t reducedZ = dimZ - 2;
 
 			// iterate voxels
 			for (int32_t z = 0; z < reducedZ; ++z)
@@ -589,21 +591,21 @@ namespace dualmc
 		{
 			// determine for each cube corner if it is outside or inside
 			int32_t code = 0;
-			if (ctx.volume[gA(cell[0], cell[1], cell[2],ctx.extent)] >= ctx.iso)
+			if (ctx.volume[CalculateLinearIndex(cell[0], cell[1], cell[2],ctx.extent)] >= ctx.iso)
 				code |= 1;
-			if (ctx.volume[gA(cell[0] + 1, cell[1], cell[2],ctx.extent)] >= ctx.iso)
+			if (ctx.volume[CalculateLinearIndex(cell[0] + 1, cell[1], cell[2],ctx.extent)] >= ctx.iso)
 				code |= 2;
-			if (ctx.volume[gA(cell[0], cell[1] + 1, cell[2],ctx.extent)] >= ctx.iso)
+			if (ctx.volume[CalculateLinearIndex(cell[0], cell[1] + 1, cell[2],ctx.extent)] >= ctx.iso)
 				code |= 4;
-			if (ctx.volume[gA(cell[0] + 1, cell[1] + 1, cell[2],ctx.extent)] >= ctx.iso)
+			if (ctx.volume[CalculateLinearIndex(cell[0] + 1, cell[1] + 1, cell[2],ctx.extent)] >= ctx.iso)
 				code |= 8;
-			if (ctx.volume[gA(cell[0], cell[1], cell[2] + 1,ctx.extent)] >= ctx.iso)
+			if (ctx.volume[CalculateLinearIndex(cell[0], cell[1], cell[2] + 1,ctx.extent)] >= ctx.iso)
 				code |= 16;
-			if (ctx.volume[gA(cell[0] + 1, cell[1], cell[2] + 1,ctx.extent)] >= ctx.iso)
+			if (ctx.volume[CalculateLinearIndex(cell[0] + 1, cell[1], cell[2] + 1,ctx.extent)] >= ctx.iso)
 				code |= 32;
-			if (ctx.volume[gA(cell[0], cell[1] + 1, cell[2] + 1,ctx.extent)] >= ctx.iso)
+			if (ctx.volume[CalculateLinearIndex(cell[0], cell[1] + 1, cell[2] + 1,ctx.extent)] >= ctx.iso)
 				code |= 64;
-			if (ctx.volume[gA(cell[0] + 1, cell[1] + 1, cell[2] + 1,ctx.extent)] >= ctx.iso)
+			if (ctx.volume[CalculateLinearIndex(cell[0] + 1, cell[1] + 1, cell[2] + 1,ctx.extent)] >= ctx.iso)
 				code |= 128;
 			return code;
 		}
@@ -679,7 +681,7 @@ namespace dualmc
 
             auto val = [&](int32_t dx, int32_t dy, int32_t dz) 
             {
-                return (float)ctx.volume[gA(cell[0] + dx, cell[1] + dy, cell[2] + dz, ctx.extent)];
+                return (float)ctx.volume[CalculateLinearIndex(cell[0] + dx, cell[1] + dy, cell[2] + dz, ctx.extent)];
             };
 
             auto interpolate = [&](float valA, float valB) 
@@ -746,7 +748,7 @@ namespace dualmc
 		uint32_t GetSharedDualPointIndex(const int3& cell, Context& ctx, DMCEdgeCode edge)
 		{
 			DualPointKey key{
-				.linearizedCellID = gA(cell, ctx.extent),
+				.linearizedCellID = CalculateLinearIndex(cell, ctx.extent),
 				.pointCode = GetDualPointCode(cell, ctx, edge)
 			};
 
@@ -762,20 +764,20 @@ namespace dualmc
 		}
 		
 		/// Compute a linearized cell cube index.
-		int32_t gA(const int3& cell, const int3& dims) const noexcept
+		int32_t CalculateLinearIndex(const int3& cell, const int3& dims) const noexcept
 		{
-			return gA(cell[0],cell[1],cell[2], dims);
+			return CalculateLinearIndex(cell[0],cell[1],cell[2], dims);
 		}
 
-		int32_t gA(int32_t x, int32_t y, int32_t z, const int3& dims) const noexcept
+		int32_t CalculateLinearIndex(int32_t x, int32_t y, int32_t z, const int3& dims) const noexcept
 		{
 			return x + dims[0] * (y + dims[1] * z);
 		}
 
 		inline std::pair<bool,bool> GetStatus(const Context& ctx,int32_t x, int32_t y, int32_t z, int32_t xOffset, int32_t yOffset, int32_t zOffset) const
 		{
-            auto vol1 = ctx.volume[gA(x, y, z,ctx.extent)];
-            auto vol2 = ctx.volume[gA(x + xOffset, y + yOffset, z + zOffset,ctx.extent)];
+            auto vol1 = ctx.volume[CalculateLinearIndex(x, y, z,ctx.extent)];
+            auto vol2 = ctx.volume[CalculateLinearIndex(x + xOffset, y + yOffset, z + zOffset,ctx.extent)];
 
 			bool entering = vol1 >= ctx.iso && vol2 < ctx.iso;
 			bool exiting = vol1 < ctx.iso && vol2 >= ctx.iso;
@@ -793,40 +795,22 @@ namespace dualmc
             {
                 if(ctx.topology == Topology::Quads)
                 {
-                    ctx.mesh.indices.emplace_back(i0);
-                    ctx.mesh.indices.emplace_back(i1);
-                    ctx.mesh.indices.emplace_back(i2);
-                    ctx.mesh.indices.emplace_back(i3);
+                    ctx.mesh.indices.insert(ctx.mesh.indices.end(), {i0, i1, i2, i3});
                 }
                 else 
                 {
-                    ctx.mesh.indices.emplace_back(i0);
-                    ctx.mesh.indices.emplace_back(i1);
-                    ctx.mesh.indices.emplace_back(i2);
-
-                    ctx.mesh.indices.emplace_back(i2);
-                    ctx.mesh.indices.emplace_back(i3);
-                    ctx.mesh.indices.emplace_back(i0);
+                    ctx.mesh.indices.insert(ctx.mesh.indices.end(), {i0, i1, i2, i2, i3, i0});
                 }
             }
             else
             {
                 if(ctx.topology == Topology::Quads)
                 {
-                    ctx.mesh.indices.emplace_back(i0);
-                    ctx.mesh.indices.emplace_back(i3);
-                    ctx.mesh.indices.emplace_back(i2);
-                    ctx.mesh.indices.emplace_back(i1);
+                    ctx.mesh.indices.insert(ctx.mesh.indices.end(), {i0, i3, i2, i1});
                 }
                 else 
                 {
-                    ctx.mesh.indices.emplace_back(i2);
-                    ctx.mesh.indices.emplace_back(i1);
-                    ctx.mesh.indices.emplace_back(i0);
-
-                    ctx.mesh.indices.emplace_back(i0);
-                    ctx.mesh.indices.emplace_back(i3);
-                    ctx.mesh.indices.emplace_back(i2);
+                    ctx.mesh.indices.insert(ctx.mesh.indices.end(), {i2, i1, i0, i0, i3, i2});
                 }
             }
         };
