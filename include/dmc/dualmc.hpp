@@ -12,47 +12,107 @@
 
 // c includes
 #include <cstdint>
-#include <cassert>
+#include <cmath>
 
+#ifndef DMC_ASSERT
+#include <cassert>
+#define DMC_ASSERT(x) assert(x)
+#endif
 
 // stl includes
 #include <unordered_map>
 #include <vector>
 #include <span>
 #include <array>
+#include <algorithm>
 
 namespace dualmc 
 {
-	using float3 = std::array<float, 3>;
-	using int3 = std::array<int32_t, 3>;
+	namespace math
+    {
+        template<typename T>
+        requires (std::is_arithmetic_v<T>)
+        struct vec2
+        {
+            constexpr vec2() : vec2(static_cast<T>(0)) {};
+            constexpr explicit vec2(T v) : x(v), y(v) {}
+            constexpr vec2(T x_, T y_) : x(x_), y(y_) {}
 
-    constexpr float3 operator+(const float3& a, const float3& b) 
-    {
-        return {a[0] + b[0], a[1] + b[1], a[2] + b[2]};
-    }
-    
-    constexpr float3 operator-(const float3& a, const float3& b) 
-    {
-        return {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
+            template<typename U>
+            constexpr explicit vec2(vec2<U> v) : x(static_cast<T>(v.x)), y(static_cast<T>(v.y)) {}
+
+            T x{}, y{};
+        };
+
+        template<typename T>
+        requires (std::is_arithmetic_v<T>)
+        struct vec3
+        {
+            constexpr vec3() : vec3(static_cast<T>(0)) {};
+            constexpr explicit vec3(T v) : x(v), y(v), z(v) {}
+            constexpr vec3(T x_, T y_, T z_) : x(x_), y(y_), z(z_) {}
+
+            template<typename U>
+            constexpr explicit vec3(vec3<U> v) : x(static_cast<T>(v.x)), y(static_cast<T>(v.y)), z(static_cast<T>(v.z)) {}
+
+            constexpr bool operator==(const vec3<T>& other) const { return x == other.x && y == other.y && z == other.z;}
+            constexpr bool operator!=(const vec3<T>& other) const { return !(*this == other);}
+
+            constexpr vec3<T> operator+(const vec3<T>& other) const { return {x + other.x, y + other.y, z + other.z}; }
+            constexpr vec3<T> operator-(const vec3<T>& other) const { return {x - other.x, y - other.y, z - other.z}; }
+            constexpr vec3<T> operator*(const vec3<T>& other) const { return {x * other.x, y * other.y, z * other.z}; }
+            constexpr vec3<T> operator/(const vec3<T>& other) const { return {x / other.x, y / other.y, z / other.z}; }
+
+            constexpr vec3<T> operator+(T s) const { return {x + s, y + s, z + s}; }
+            constexpr vec3<T> operator-(T s) const { return {x - s, y - s, z - s}; }
+            constexpr vec3<T> operator*(T s) const { return {x * s, y * s, z * s}; }
+            constexpr vec3<T> operator/(T s) const { return {x / s, y / s, z / s}; }
+
+            constexpr vec3<T>& operator+=(const vec3<T>& other) { x += other.x; y += other.y; z += other.z; return *this; }
+            constexpr vec3<T>& operator-=(const vec3<T>& other) { x -= other.x; y -= other.y; z -= other.z; return *this; }
+            constexpr vec3<T>& operator*=(const vec3<T>& other) { x *= other.x; y *= other.y; z *= other.z; return *this; }
+            constexpr vec3<T>& operator/=(const vec3<T>& other) { x /= other.x; y /= other.y; z /= other.z; return *this; }
+
+            constexpr vec3<T>& operator+=(T s) { x += s; y += s; z += s; return *this; }
+            constexpr vec3<T>& operator-=(T s) { x -= s; y -= s; z -= s; return *this; }
+            constexpr vec3<T>& operator*=(T s) { x *= s; y *= s; z *= s; return *this; }
+            constexpr vec3<T>& operator/=(T s) { x /= s; y /= s; z /= s; return *this; }
+
+            constexpr float dot(const vec3<T>& other) const { return x * other.x + y * other.y + z * other.z; }
+            constexpr float length() const { return std::sqrt(dot(*this)); }
+            constexpr vec3<T> normalized() const { 
+                float len = length(); 
+                return len > 1e-6f ? (*this / len) : vec3<T>{0, 0, 1}; 
+            }
+
+            constexpr T& operator[](std::size_t i) 
+            {
+                assert(i < 3);
+                return *(reinterpret_cast<T*>(&x) + i);
+            }
+
+            constexpr const T& operator[](std::size_t i) const 
+            {
+                assert(i < 3);
+                return *(reinterpret_cast<const T*>(&x) + i);
+            }
+
+            T x{}, y{}, z{};
+        };
     }
 
-    constexpr float3 operator*(const float3& a, float s) 
-    {
-        return {a[0] * s, a[1] * s, a[2] * s};
-    }
-
-    constexpr float3& operator+=(float3& a, const float3& b) 
-    {
-        a[0] += b[0]; a[1] += b[1]; a[2] += b[2];
-        return a;
-    }
+    using float2 = math::vec2<float>;
+    using float3 = math::vec3<float>;
+    using int3 = math::vec3<int32_t>;
+    using uint3 = math::vec3<uint32_t>;
 
 	struct Vertex
 	{
-        Vertex() = default;
+        Vertex(const float3& pos = {0,0,0}, const float3& norm = {0,0,0}) 
+            : position(pos), normal(norm) {}
 
 		float3 position;
-		// TODO: Normals
+		float3 normal;// TODO: Normals
 	};
 
 	enum class Topology : uint8_t { Triangles, Quads };
@@ -92,16 +152,18 @@ namespace dualmc
 			VolumeDataType iso,
 			Topology topology = Topology::Triangles)
 		{
-			assert(!(dimension[0] < 0 || dimension[1] < 0 || dimension[2] < 0) && "Dimension is invalid");
-            assert(!data.empty() && "Volume data is empty");
-            assert(data.size() >= (size_t)(dimension[0] * dimension[1] * dimension[2]) && "Volume data is smaller than extent");
+			DMC_ASSERT(!(dimension.x < 0 || dimension.y < 0 || dimension.z < 0) && "Dimension is invalid");
+            DMC_ASSERT(!data.empty() && "Volume data is empty");
+            DMC_ASSERT(data.size() >= static_cast<size_t>(dimension.x * dimension.y * dimension.z) && "Volume data is smaller than extent");
 
             Context ctx{
                 .volume = data,
                 .extent = dimension,
+                .centerOffset = {dimension.x / 2.0f, dimension.y / 2.0f, dimension.z / 2.0f},
                 .iso = iso,
                 .topology = topology,
-                .mesh = Mesh{}
+                .mesh = Mesh{},
+                .pointToIndex = {}
             };
 			
 			BuildInternal( ctx);
@@ -114,10 +176,13 @@ namespace dualmc
 		{
             // a dual point can be uniquely identified by ite linearized volume cell
             // id and point code
-            int32_t linearizedCellID;
+            uint32_t linearizedCellID;
             int32_t pointCode;
             /// Equal operator for unordered map
-            bool operator==(DualPointKey const& other) const = default;
+            bool operator==(const DualPointKey& other) const
+            {
+                return linearizedCellID == other.linearizedCellID && pointCode == other.pointCode;
+            }
         };
         
         /// Functor for dual point key hash generation
@@ -133,10 +198,21 @@ namespace dualmc
         {
             std::span<VolumeDataType> volume;
             int3 extent;
+            float3 centerOffset;
             VolumeDataType iso;
             Topology topology;
             Mesh mesh;
             std::unordered_map<DualPointKey,uint32_t,DualPointKeyHash> pointToIndex;
+
+            VolumeDataType Get(int32_t x, int32_t y, int32_t z) const
+            {
+                return volume[CalculateLinearIndex(x, y, z, extent)];
+            }
+
+            VolumeDataType Get(const int3& cell) const
+            {
+                return Get(cell.x, cell.y, cell.z);
+            }
         };
 
         /*
@@ -218,7 +294,7 @@ namespace dualmc
          * A marching cube case produces up to four faces and ,thus, up to four
          * dual points.
         */
-        static constexpr std::array<std::array<int32_t, 4>, 256> dualPointsList{{
+        static constexpr std::array<std::array<uint32_t, 4>, 256> dualPointsList{{
             {0, 0, 0, 0}, // 0
             {EDGE0 | EDGE3 | EDGE8, 0, 0, 0}, // 1
             {EDGE0 | EDGE1 | EDGE9, 0, 0, 0}, // 2
@@ -506,9 +582,9 @@ namespace dualmc
 
 		void BuildInternal(Context& ctx)
 		{
-            int32_t dimX = ctx.extent[0] - 2;
-			int32_t dimY = ctx.extent[1] - 2;
-			int32_t dimZ = ctx.extent[2] - 2;
+            int32_t dimX = ctx.extent.x;
+			int32_t dimY = ctx.extent.y;
+			int32_t dimZ = ctx.extent.z;
 
 			int32_t reducedX = dimX - 2;
 			int32_t reducedY = dimY - 2;
@@ -591,21 +667,21 @@ namespace dualmc
 		{
 			// determine for each cube corner if it is outside or inside
 			int32_t code = 0;
-			if (ctx.volume[CalculateLinearIndex(cell[0], cell[1], cell[2],ctx.extent)] >= ctx.iso)
+			if (ctx.Get(cell.x, cell.y, cell.z) >= ctx.iso)
 				code |= 1;
-			if (ctx.volume[CalculateLinearIndex(cell[0] + 1, cell[1], cell[2],ctx.extent)] >= ctx.iso)
+			if (ctx.Get(cell.x + 1, cell.y, cell.z) >= ctx.iso)
 				code |= 2;
-			if (ctx.volume[CalculateLinearIndex(cell[0], cell[1] + 1, cell[2],ctx.extent)] >= ctx.iso)
+			if (ctx.Get(cell.x, cell.y + 1, cell.z) >= ctx.iso)
 				code |= 4;
-			if (ctx.volume[CalculateLinearIndex(cell[0] + 1, cell[1] + 1, cell[2],ctx.extent)] >= ctx.iso)
+			if (ctx.Get(cell.x + 1, cell.y + 1, cell.z) >= ctx.iso)
 				code |= 8;
-			if (ctx.volume[CalculateLinearIndex(cell[0], cell[1], cell[2] + 1,ctx.extent)] >= ctx.iso)
+			if (ctx.Get(cell.x, cell.y, cell.z + 1) >= ctx.iso)
 				code |= 16;
-			if (ctx.volume[CalculateLinearIndex(cell[0] + 1, cell[1], cell[2] + 1,ctx.extent)] >= ctx.iso)
+			if (ctx.Get(cell.x + 1, cell.y, cell.z + 1) >= ctx.iso)
 				code |= 32;
-			if (ctx.volume[CalculateLinearIndex(cell[0], cell[1] + 1, cell[2] + 1,ctx.extent)] >= ctx.iso)
+			if (ctx.Get(cell.x, cell.y + 1, cell.z + 1) >= ctx.iso)
 				code |= 64;
-			if (ctx.volume[CalculateLinearIndex(cell[0] + 1, cell[1] + 1, cell[2] + 1,ctx.extent)] >= ctx.iso)
+			if (ctx.Get(cell.x + 1, cell.y + 1, cell.z + 1) >= ctx.iso)
 				code |= 128;
 			return code;
 		}
@@ -661,7 +737,7 @@ namespace dualmc
                 }
             }
 
-			for (int32_t i = 0; i < 4; ++i)
+			for (size_t i = 0; i < 4; ++i)
 			{
 				if (dualPointsList[cubeCode][i] & edge) 
 				{
@@ -670,6 +746,45 @@ namespace dualmc
 			}
 			return 0;
 		}
+
+        void CalculateNormal(const Context& ctx, Vertex &v) const
+        {
+            int x0 = std::clamp(static_cast<int>(std::floor(v.position.x)), 0, ctx.extent.x - 1);
+            int y0 = std::clamp(static_cast<int>(std::floor(v.position.y)), 0, ctx.extent.y - 1);
+            int z0 = std::clamp(static_cast<int>(std::floor(v.position.z)), 0, ctx.extent.z - 1); 
+
+            int x1 = std::min(x0 + 1, ctx.extent.x - 1);
+            int y1 = std::min(y0 + 1, ctx.extent.y - 1);
+            int z1 = std::min(z0 + 1, ctx.extent.z - 1);
+
+            float dx = (x0 == x1) ? 0.0f : (v.position.x - static_cast<float>(x0));
+            float dy = (y0 == y1) ? 0.0f : (v.position.y - static_cast<float>(y0));
+            float dz = (z0 == z1) ? 0.0f : (v.position.z - static_cast<float>(z0));
+
+            float v000 = static_cast<float>(ctx.Get(x0, y0, z0));
+            float v100 = static_cast<float>(ctx.Get(x1, y0, z0));
+            float v010 = static_cast<float>(ctx.Get(x0, y1, z0));
+            float v110 = static_cast<float>(ctx.Get(x1, y1, z0));
+            float v001 = static_cast<float>(ctx.Get(x0, y0, z1));
+            float v101 = static_cast<float>(ctx.Get(x1, y0, z1));
+            float v011 = static_cast<float>(ctx.Get(x0, y1, z1));
+            float v111 = static_cast<float>(ctx.Get(x1, y1, z1));
+
+            v.normal = float3{
+                ((1 - dy) * (1 - dz) * (v100 - v000) +
+                 dy * (1 - dz) * (v110 - v010) +
+                 (1 - dy) * dz * (v101 - v001) +
+                 dy * dz * (v111 - v011)),
+                ((1 - dx) * (1 - dz) * (v010 - v000) +
+                 dx * (1 - dz) * (v110 - v100) +
+                 (1 - dx) * dz * (v011 - v001) +
+                 dx * dz * (v111 - v101)),
+                ((1 - dx) * (1 - dy) * (v001 - v000) +
+                 dx * (1 - dy) * (v101 - v100) +
+                 (1 - dx) * dy * (v011 - v010) +
+                 dx * dy * (v111 - v110))
+            }.normalized();
+        }
 
 		/// Given a dual point code and iso value, compute the dual point.
 		void CalculateDualPoint(const int3& cell, const Context& ctx, int32_t pointCode, Vertex &v) const
@@ -681,48 +796,36 @@ namespace dualmc
 
             auto val = [&](int32_t dx, int32_t dy, int32_t dz) 
             {
-                return (float)ctx.volume[CalculateLinearIndex(cell[0] + dx, cell[1] + dy, cell[2] + dz, ctx.extent)];
+                return static_cast<float>(ctx.Get(cell.x + dx, cell.y + dy, cell.z + dz));
             };
 
-            auto interpolate = [&](float valA, float valB) 
-            {
-                 return ((float)ctx.iso - valA) / (valB - valA);
-            };
-
-			// sum edge intersection vertices using the point code
 			struct EdgeDef {
-                int8_t axis;      // 0=x, 1=y, 2=z
-                int8_t oX, oY, oZ; // Origin coordinates
+                uint8_t axis;      // 0=x, 1=y, 2=z
+                uint8_t oX, oY, oZ; // Origin coordinates
             };
 
-            // Table mapping edge index (0-11) to axis and origin
             static constexpr std::array<EdgeDef, 12> edgeTable = {{
                 {0, 0,0,0}, {2, 1,0,0}, {0, 0,0,1}, {2, 0,0,0}, // Edges 0-3
                 {0, 0,1,0}, {2, 1,1,0}, {0, 0,1,1}, {2, 0,1,0}, // Edges 4-7
                 {1, 0,0,0}, {1, 1,0,0}, {1, 1,0,1}, {1, 0,0,1}  // Edges 8-11
             }};
 
-            for (int i = 0; i < 12; ++i) 
+            for (size_t i = 0; i < 12; ++i) 
             {
                 if (pointCode & (1 << i)) 
                 {
-                    const auto& edge = edgeTable[i];
-                    
-                    // Value at edge origin
+                    const auto edge = edgeTable[i];
+
                     float v1 = val(edge.oX, edge.oY, edge.oZ);
                     
-                    // Value at edge end (origin + axis direction)
                     float v2 = val(
                         edge.oX + (edge.axis == 0), 
                         edge.oY + (edge.axis == 1), 
                         edge.oZ + (edge.axis == 2)
                     );
 
-                    // Base position is the edge origin
                     float3 pos = {static_cast<float>(edge.oX), static_cast<float>(edge.oY), static_cast<float>(edge.oZ)};
-                    
-                    // Add interpolated offset along the axis
-                    pos[edge.axis] += interpolate(v1, v2);
+                    pos[edge.axis] += (static_cast<float>(ctx.iso) - v1) / (v2 - v1);
                     
                     p = p + pos;
                     points++;
@@ -730,14 +833,12 @@ namespace dualmc
             }
 
 			// divide by number of accumulated points
-			float invPoints = 1.0f / (float)points;
+			float invPoints = 1.0f / static_cast<float>(points);
 			p = p * invPoints;
 
-			v.position = {
-				static_cast<float>(cell[0]) + p[0], 
-				static_cast<float>(cell[1]) + p[1], 
-				static_cast<float>(cell[2]) + p[2]
-			};
+			v.position = float3{cell} + p;
+            CalculateNormal(ctx, v);
+            v.position -= ctx.centerOffset;
 		}
 
         /*
@@ -764,20 +865,20 @@ namespace dualmc
 		}
 		
 		/// Compute a linearized cell cube index.
-		int32_t CalculateLinearIndex(const int3& cell, const int3& dims) const noexcept
+		static uint32_t CalculateLinearIndex(const int3& cell, const int3& dims) noexcept
 		{
-			return CalculateLinearIndex(cell[0],cell[1],cell[2], dims);
+			return CalculateLinearIndex(cell.x,cell.y,cell.z, dims);
 		}
 
-		int32_t CalculateLinearIndex(int32_t x, int32_t y, int32_t z, const int3& dims) const noexcept
+		static uint32_t CalculateLinearIndex(int32_t x, int32_t y, int32_t z, const int3& dims) noexcept
 		{
-			return x + dims[0] * (y + dims[1] * z);
+			return x + dims.x * (y + dims.y * z);
 		}
 
 		inline std::pair<bool,bool> GetStatus(const Context& ctx,int32_t x, int32_t y, int32_t z, int32_t xOffset, int32_t yOffset, int32_t zOffset) const
 		{
-            auto vol1 = ctx.volume[CalculateLinearIndex(x, y, z,ctx.extent)];
-            auto vol2 = ctx.volume[CalculateLinearIndex(x + xOffset, y + yOffset, z + zOffset,ctx.extent)];
+            auto vol1 = ctx.Get(x, y, z);
+            auto vol2 = ctx.Get(x + xOffset, y + yOffset, z + zOffset);
 
 			bool entering = vol1 >= ctx.iso && vol2 < ctx.iso;
 			bool exiting = vol1 < ctx.iso && vol2 >= ctx.iso;

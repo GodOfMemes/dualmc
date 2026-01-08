@@ -4,6 +4,7 @@
 // See the LICENSE.txt file for details.
 
 // C libs
+#include "daxa/types.hpp"
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -20,6 +21,21 @@
 
 // dual mc builder vertex and quad definitions
 #include <dmc/dualmc.hpp>
+
+#include <daxa/daxa.hpp>
+#include <daxa/utils/task_graph.hpp>
+#include <daxa/utils/pipeline_manager.hpp>
+
+#include <vulkan/vulkan_core.h>
+#include <GLFW/glfw3.h>
+
+#include <array>
+
+#define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 using std::chrono::high_resolution_clock;
 using std::chrono::duration;
@@ -60,6 +76,8 @@ private:
     
     /// Write a Wavefront OBJ model for the extracted ISO surface.
     void writeOBJ(std::string const & fileName) const;
+
+    void draw();
     
     /// Print program arguments.
     void printArgs() const;
@@ -131,7 +149,8 @@ void DualMCExample::run(int const argc, char** argv) {
     computeSurface(options.isoValue,options.generateManifold);
     
     // write output file
-    writeOBJ(options.outputFile);
+    //writeOBJ(options.outputFile);
+    draw();
 }
 
 //------------------------------------------------------------------------------
@@ -143,7 +162,7 @@ bool DualMCExample::parseArgs(int const argc, char** argv, AppOptions & options)
     options.dimY = -1;
     options.dimZ = -1;
     options.isoValue = 0.5f;
-    options.generateCaffeine = false;
+    options.generateCaffeine = true;
     options.generateManifold = false;
     options.outputFile.assign("surface.obj");
     
@@ -226,11 +245,11 @@ void DualMCExample::computeSurface(float const iso, bool const generateManifold)
     if(volume.bitDepth == 8) {
         dualmc::Mesher<uint8_t> builder;
         mesh = builder.Build(volume.data, {volume.dimX, volume.dimY, volume.dimZ},
-            iso * std::numeric_limits<uint8_t>::max(), dualmc::Topology::Quads);
+            iso * std::numeric_limits<uint8_t>::max(), dualmc::Topology::Triangles);
     } else if(volume.bitDepth == 16) {
         dualmc::Mesher<uint16_t> builder;
         mesh = builder.Build({(uint16_t*)&volume.data.front(), volume.data.size() / sizeof(uint16_t)}, {volume.dimX, volume.dimY, volume.dimZ},
-            iso * std::numeric_limits<uint16_t>::max(), dualmc::Topology::Quads);
+            iso * std::numeric_limits<uint16_t>::max(), dualmc::Topology::Triangles);
     } else {
         std::cerr << "Invalid volume bit depth" << std::endl;
         return;
@@ -424,6 +443,333 @@ void DualMCExample::writeOBJ(std::string const & fileName) const {
     }
     
     file.close();
+}
+
+#include "FastNoiseLite.h"
+
+void DualMCExample::draw()
+{
+    
+    constexpr uint32_t _VolumeSize = 32;
+    float height = 64 * 0.4f;
+    float noiseScale = 2.0f;
+    float heightScale = 10.0f;
+
+    FastNoiseLite noise;
+    noise.SetSeed(42424242);
+    noise.SetFractalOctaves(5);
+    noise.SetFractalGain(0.5);
+
+    std::array<float,_VolumeSize * _VolumeSize * _VolumeSize> volumeData;
+
+    for (uint32_t z = 0; z < _VolumeSize; ++z)
+    {
+        for (uint32_t y = 0; y < _VolumeSize; ++y)
+        {
+            for (uint32_t x = 0; x < _VolumeSize; ++x)
+            {
+                uint32_t idx = x + _VolumeSize * (y + _VolumeSize * z);
+
+                float n = noise.GetNoise(x * noiseScale, z * noiseScale);
+                float terrain_height = height + (n * heightScale);
+                /*bool inside = (float)y < terrain_height;
+
+                
+                if (inside)
+                    volumeData[idx] = UINT16_MAX;
+                else
+                    volumeData[idx] = 0;
+                */
+
+                //float density = terrain_height - y;
+                float density = y - terrain_height;
+
+                volumeData[idx] = density;// * std::numeric_limits<VOLUME_DATA_TYPE>::max();
+            }
+        }
+    }
+
+    dualmc::Mesher<float> builder;
+    mesh = builder.Build(volumeData, {_VolumeSize, _VolumeSize, _VolumeSize}, 0.0f, dualmc::Topology::Triangles);
+    
+
+    struct WindowInfo
+    {
+        std::string title;
+        daxa::u32 width{}, height{};
+        bool swapchain_out_of_date = false;
+    };
+
+    std::cout << "Drawing mesh with " << mesh.vertices.size() << " vertices and "
+      << mesh.indices.size() << " indices" << std::endl;
+    
+    auto window_info = WindowInfo{.title = "Atom",.width = 800, .height = 600};
+    glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
+    glfwInit();
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    auto * glfw_window_ptr = glfwCreateWindow(
+        static_cast<daxa::i32>(window_info.width),
+        static_cast<daxa::i32>(window_info.height),
+        window_info.title.c_str(), nullptr, nullptr);
+    glfwSetWindowUserPointer(glfw_window_ptr, &window_info);
+    glfwSetWindowSizeCallback(
+        glfw_window_ptr,
+        [](GLFWwindow * glfw_window, int width, int height)
+    {
+        auto & info = *reinterpret_cast<WindowInfo *>(glfwGetWindowUserPointer(glfw_window));
+        info.swapchain_out_of_date = true;
+        info.width = static_cast<daxa::u32>(width);
+        info.height = static_cast<daxa::u32>(height);
+    });
+
+    daxa::Instance instance = daxa::create_instance({});
+
+    daxa::DeviceInfo2 device_info = {
+        .explicit_features = {},
+        .max_allowed_images = 1024,
+        .max_allowed_buffers = 1024,
+        .name = "my device",
+    };
+
+    auto device = instance.create_device_2(instance.choose_device({}, device_info));
+    if(!device.is_valid())
+    {
+        std::cerr << "Failed to create device" << std::endl;
+        return;
+    }
+
+    daxa::Swapchain swapchain = device.create_swapchain({
+        .native_window = {
+            .userData = glfw_window_ptr,
+            .get_window_surface = [](void * userData, void * instance, void ** out_surface) -> int
+            {
+                auto* glfw_window = reinterpret_cast<GLFWwindow *>(userData);
+                return (int)glfwCreateWindowSurface((VkInstance)instance, glfw_window, NULL, (VkSurfaceKHR *)out_surface);
+            },
+            .get_window_extent = [](void * userData) -> daxa::Extent2D
+            {
+                auto* glfw_window = reinterpret_cast<GLFWwindow *>(userData);
+                int width, height;
+                glfwGetWindowSize(glfw_window, &width, &height);
+                return daxa::Extent2D{static_cast<daxa::u32>(width), static_cast<daxa::u32>(height)};
+            }
+        },
+        .native_window_platform = []
+        {
+            switch(glfwGetPlatform())
+            {
+                case GLFW_PLATFORM_WIN32:
+                    return daxa::NativeWindowPlatform::WIN32_API;
+                case GLFW_PLATFORM_WAYLAND:
+                    return daxa::NativeWindowPlatform::WAYLAND_API;
+                case GLFW_PLATFORM_X11:
+                default:
+                    return daxa::NativeWindowPlatform::XLIB_API;
+            }
+        }(),
+        .surface_format_selector = daxa::default_format_score,
+        .present_mode = daxa::PresentMode::MAILBOX,
+        .image_usage = daxa::ImageUsageFlagBits::TRANSFER_DST,
+        .name = "my swapchain",
+    });
+
+    auto pipeline_manager = daxa::PipelineManager({
+        .device = device,
+        .root_paths = {
+            DAXA_SHADER_INCLUDE_DIR,
+            "../examples"
+        },
+        .default_language = daxa::ShaderLanguage::SLANG,
+        .default_enable_debug_info = true,
+        .name = "my pipeline manager",
+    });
+
+    std::shared_ptr<daxa::RasterPipeline> pipeline;
+    {
+        auto result = pipeline_manager.add_raster_pipeline2({
+            .vertex_shader_info = daxa::ShaderCompileInfo2{.source = daxa::ShaderFile{"atom.slang"}, .entry_point = "vertex_main"},
+            .fragment_shader_info = daxa::ShaderCompileInfo2{.source = daxa::ShaderFile{"atom.slang"}, .entry_point = "fragment_main"},
+            .color_attachments = {{.format = swapchain.get_format()}},
+            .depth_test = daxa::DepthTestInfo{
+                .depth_attachment_format = daxa::Format::D32_SFLOAT,
+                .enable_depth_write = true
+            },
+            .raster = {
+                .face_culling = daxa::FaceCullFlagBits::BACK_BIT,
+                .front_face_winding = daxa::FrontFaceWinding::COUNTER_CLOCKWISE,
+            },
+        });
+        if (result.is_err())
+        {
+            std::cerr << result.message() << std::endl;
+            return;
+        }
+        pipeline = result.value();
+    }
+
+    auto task_swapchain_image = daxa::TaskImage{{.swapchain_image = true, .name = "swapchain image"}};
+
+    auto vertex_buffer = device.create_buffer({
+        .size = sizeof(dualmc::Vertex) * mesh.vertices.size(),
+        .allocate_info = daxa::MemoryFlagBits::HOST_ACCESS_RANDOM,
+        .name = "vertex buffer",
+    });
+
+    auto index_buffer = device.create_buffer({
+        .size = sizeof(daxa::u32) * mesh.indices.size(),
+        .allocate_info = daxa::MemoryFlagBits::HOST_ACCESS_RANDOM,
+        .name = "index buffer",
+    });
+
+    {
+        auto data = device.buffer_host_address_as<dualmc::Vertex>(vertex_buffer).value();
+        std::memcpy(data, mesh.vertices.data(), sizeof(dualmc::Vertex) * mesh.vertices.size());
+    }
+
+    {
+        auto data = device.buffer_host_address_as<daxa::u32>(index_buffer).value();
+        std::memcpy(data, mesh.indices.data(), sizeof(daxa::u32) * mesh.indices.size());
+    }
+
+    auto task_vertex_buffer = daxa::TaskBuffer{{
+        .initial_buffers = {.buffers = {&vertex_buffer, 1}}
+    }};
+
+    auto depth_image = device.create_image({
+        .format = daxa::Format::D32_SFLOAT,
+        .size = {window_info.width, window_info.height, 1},
+        .usage = daxa::ImageUsageFlagBits::DEPTH_STENCIL_ATTACHMENT,
+        .name = "depth image",
+    });
+
+    auto task_depth_image = daxa::TaskImage{{
+        .initial_images = {.images = {&depth_image, 1}}
+    }};
+
+    auto loop_task_graph = daxa::TaskGraph({
+        .device = device,
+        .swapchain = swapchain,
+        .reorder_tasks = false,
+        .name = "loop",
+    });
+
+    loop_task_graph.use_persistent_image(task_swapchain_image);
+    loop_task_graph.use_persistent_image(task_depth_image);
+    loop_task_graph.use_persistent_buffer(task_vertex_buffer);
+
+    float angle = 0;
+
+    loop_task_graph.add_task(daxa::InlineTask::Raster("Clear")
+        .color_attachment.reads_writes(task_swapchain_image)
+        .depth_stencil_attachment.reads_writes(task_depth_image)
+        .reads(task_vertex_buffer)
+        .executes([&](daxa::TaskInterface ti)
+        {
+            auto swapchain_attachment = ti.get(task_swapchain_image);
+            auto depth_attachment = ti.get(task_depth_image);
+
+            auto swapchain_info = ti.device.info(swapchain_attachment.ids[0]).value();
+            daxa::RenderCommandRecorder render_recorder = std::move(ti.recorder).begin_renderpass({
+                .color_attachments = std::array{
+                    daxa::RenderAttachmentInfo{
+                        .image_view = swapchain_attachment.ids[0].default_view(),
+                        .load_op = daxa::AttachmentLoadOp::CLEAR,
+                        .clear_value = std::array<daxa::f32, 4>{0.1f, 0.1f, 0.1f, 1.0f}
+                    },
+                },
+                .depth_attachment = daxa::RenderAttachmentInfo{
+                    .image_view = depth_attachment.ids[0].default_view(),
+                    .load_op = daxa::AttachmentLoadOp::CLEAR,
+                    .clear_value = daxa::DepthValue{1, 0}
+                },
+                .render_area = {.width = swapchain_info.size.x, .height = swapchain_info.size.y},
+            });
+            
+            struct Push {
+                daxa::DeviceAddress device_address;
+                glm::mat4 mvp;
+            }; 
+            
+            Push push{
+                ti.device.buffer_device_address(ti.get(task_vertex_buffer).ids[0]).value(),
+                glm::perspective(glm::radians(60.0f), window_info.width / (float)window_info.height, 0.0001f, 1000.0f)
+            };
+            //push.mvp[1][1] *= -1;
+            push.mvp *= glm::lookAt(glm::vec3{0.0f, 0, -40.0f}, glm::vec3{0.0f, 0.0f, 0.0f}, glm::vec3{0.0f, 1.0f, 0.0f});
+
+            auto modelMatrix = glm::translate(glm::mat4{1.0f}, {0.0f, 0.0f, -0.0f});
+            //modelMatrix = glm::rotate(modelMatrix, glm::radians(angle), {0.2f, 0.4f, 0.1f});
+
+            push.mvp *= modelMatrix;
+
+            render_recorder.set_pipeline(*pipeline);
+            render_recorder.push_constant(push);
+            render_recorder.set_index_buffer({.id = index_buffer});
+            render_recorder.draw_indexed({.index_count = static_cast<daxa::u32>(mesh.indices.size())});
+
+            ti.recorder = std::move(render_recorder).end_renderpass();
+        })
+    );
+
+    loop_task_graph.submit({});
+    loop_task_graph.present({});
+    loop_task_graph.complete({});
+
+    std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+    auto prev_time = start;
+    daxa::f32 time = 0.0f;
+    daxa::f32 delta_time = 1.0f;
+
+    while(true)
+    {
+
+        glfwPollEvents();
+        if (glfwWindowShouldClose(glfw_window_ptr) != 0)
+        {
+            break;
+        }
+
+        auto now = std::chrono::high_resolution_clock::now();
+        time = std::chrono::duration<daxa::f32>(now - start).count();
+        delta_time = std::chrono::duration<daxa::f32>(now - prev_time).count();
+        prev_time = now;
+
+        angle += 90.0f * delta_time;
+
+        if (window_info.swapchain_out_of_date)
+        {
+            swapchain.resize();
+            device.destroy(depth_image);
+            depth_image = device.create_image({
+                .format = daxa::Format::D32_SFLOAT,
+                .size = {window_info.width, window_info.height, 1},
+                .usage = daxa::ImageUsageFlagBits::DEPTH_STENCIL_ATTACHMENT,
+                .name = "depth image",
+            });
+
+            window_info.swapchain_out_of_date = false;
+        }
+
+        auto swapchain_image = swapchain.acquire_next_image();
+        if (swapchain_image.is_empty())
+        {
+            continue;
+        }
+
+        task_swapchain_image.set_images({.images = std::span{&swapchain_image, 1}});
+
+        loop_task_graph.execute({});
+        
+        device.collect_garbage();
+    }
+
+    device.wait_idle();
+
+    device.destroy(vertex_buffer);
+    device.destroy(index_buffer);
+    device.destroy(depth_image);
+
+    device.collect_garbage();
 }
 
 //------------------------------------------------------------------------------
