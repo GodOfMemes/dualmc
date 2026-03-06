@@ -12,7 +12,7 @@ if(PROJECT_IS_TOP_LEVEL)
 endif()
 
 add_library(dualmc INTERFACE)
-target_include_directories(dualmc INTERFACE "${CMAKE_SOURCE_DIR}/include")
+target_include_directories(dualmc INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
 if(PROJECT_IS_TOP_LEVEL)
     add_subdirectory(examples)
