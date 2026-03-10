@@ -16,7 +16,7 @@
 
 #ifndef DMC_ASSERT
 #include <cassert>
-#define DMC_ASSERT(x) assert(x)
+#define DMC_ASSERT(cond, msg) assert(cond && msg)
 #endif
 
 // stl includes
@@ -30,6 +30,8 @@ namespace dualmc
 {
 	namespace math
     {
+        #ifndef TYPE_VEC2
+        #define TYPE_VEC2(x) math::vec2<x>
         template<typename T>
         requires (std::is_arithmetic_v<T>)
         struct vec2
@@ -43,7 +45,11 @@ namespace dualmc
 
             T x{}, y{};
         };
+        #endif
 
+        #ifndef TYPE_VEC3
+        #define TYPE_VEC3(x) math::vec3<x>
+        #define TYPE_VEC3_NORMALIZED(v) v.normalized()
         template<typename T>
         requires (std::is_arithmetic_v<T>)
         struct vec3
@@ -78,10 +84,8 @@ namespace dualmc
             constexpr vec3<T>& operator*=(T s) { x *= s; y *= s; z *= s; return *this; }
             constexpr vec3<T>& operator/=(T s) { x /= s; y /= s; z /= s; return *this; }
 
-            constexpr float dot(const vec3<T>& other) const { return x * other.x + y * other.y + z * other.z; }
-            constexpr float length() const { return std::sqrt(dot(*this)); }
             constexpr vec3<T> normalized() const { 
-                float len = length(); 
+                float len = std::sqrt(x * x + y * y + z * z); 
                 return len > 1e-6f ? (*this / len) : vec3<T>{0, 0, 1}; 
             }
 
@@ -99,12 +103,13 @@ namespace dualmc
 
             T x{}, y{}, z{};
         };
+        #endif
     }
 
-    using float2 = math::vec2<float>;
-    using float3 = math::vec3<float>;
-    using int3 = math::vec3<int32_t>;
-    using uint3 = math::vec3<uint32_t>;
+    using float2 = TYPE_VEC2(float);
+    using float3 = TYPE_VEC3(float);
+    using int3 = TYPE_VEC3(int32_t);
+    using uint3 = TYPE_VEC3(uint32_t);
 
 	struct Vertex
 	{
@@ -112,7 +117,7 @@ namespace dualmc
             : position(pos), normal(norm) {}
 
 		float3 position;
-		float3 normal;// TODO: Normals
+		float3 normal;
 	};
 
 	enum class Topology : uint8_t { Triangles, Quads };
@@ -136,7 +141,7 @@ namespace dualmc
     /// The class optionally can guarantee manifold meshes by taking the Manifold
     /// Dual Marching Cubes approach from Rephael Wenger as described in
     /// chapter 3.3.5 of his book "Isosurfaces: Geometry, Topology, and Algorithms".
-    template<class T>
+    template<class T = uint16_t>
     requires std::is_arithmetic_v<T>
 	class Mesher 
     {
@@ -152,9 +157,9 @@ namespace dualmc
 			VolumeDataType iso,
 			Topology topology = Topology::Triangles)
 		{
-			DMC_ASSERT(!(dimension.x < 0 || dimension.y < 0 || dimension.z < 0) && "Dimension is invalid");
-            DMC_ASSERT(!data.empty() && "Volume data is empty");
-            DMC_ASSERT(data.size() >= static_cast<size_t>(dimension.x * dimension.y * dimension.z) && "Volume data is smaller than extent");
+			DMC_ASSERT(!(dimension.x < 0 || dimension.y < 0 || dimension.z < 0), "Dimension is invalid");
+            DMC_ASSERT(!data.empty(), "Volume data is empty");
+            DMC_ASSERT(data.size() >= static_cast<size_t>(dimension.x * dimension.y * dimension.z), "Volume data is smaller than extent");
 
             Context ctx{
                 .volume = data,
@@ -715,7 +720,7 @@ namespace dualmc
                 // copy current cube coordinates into an array.
                 int3 neighborCoords = cell;
                 // get the dimension of the non-zero coordinate axis
-                uint32_t component = direction >> 1;
+                int32_t component = direction >> 1;
                 // get the sign of the direction
                 int32_t delta = (direction & 1) == 1 ? 1 : -1;
                 // modify the correspong cube coordinate
@@ -737,13 +742,13 @@ namespace dualmc
                 }
             }
 
-			for (size_t i = 0; i < 4; ++i)
-			{
-				if (dualPointsList[cubeCode][i] & edge) 
-				{
-					return dualPointsList[cubeCode][i];
-				}
-			}
+            for (size_t i = 0; i < 4; ++i)
+            {
+                if (dualPointsList[static_cast<size_t>(cubeCode)][i] & edge) 
+                {
+                    return static_cast<int32_t>(dualPointsList[static_cast<size_t>(cubeCode)][i]);
+                }
+            }
 			return 0;
 		}
 
@@ -783,7 +788,8 @@ namespace dualmc
                  dx * (1 - dy) * (v101 - v100) +
                  (1 - dx) * dy * (v011 - v010) +
                  dx * dy * (v111 - v110))
-            }.normalized();
+            };
+            v.normal = TYPE_VEC3_NORMALIZED(v.normal);
         }
 
 		/// Given a dual point code and iso value, compute the dual point.
@@ -793,11 +799,6 @@ namespace dualmc
 			// original marching cubes face
 			float3 p{0,0,0};
 			int32_t points = 0;
-
-            auto val = [&](int32_t dx, int32_t dy, int32_t dz) 
-            {
-                return static_cast<float>(ctx.Get(cell.x + dx, cell.y + dy, cell.z + dz));
-            };
 
 			struct EdgeDef {
                 uint8_t axis;      // 0=x, 1=y, 2=z
@@ -816,13 +817,12 @@ namespace dualmc
                 {
                     const auto edge = edgeTable[i];
 
-                    float v1 = val(edge.oX, edge.oY, edge.oZ);
-                    
-                    float v2 = val(
-                        edge.oX + (edge.axis == 0), 
-                        edge.oY + (edge.axis == 1), 
-                        edge.oZ + (edge.axis == 2)
-                    );
+                    float v1 = static_cast<float>(ctx.Get(cell.x + edge.oX, cell.y + edge.oY, cell.z + edge.oZ));
+                    float v2 = static_cast<float>(ctx.Get(
+                        cell.x + (edge.oX + (edge.axis == 0)),
+                        cell.y + (edge.oY + (edge.axis == 1)),
+                        cell.z + (edge.oZ + (edge.axis == 2))
+                    ));
 
                     float3 pos = {static_cast<float>(edge.oX), static_cast<float>(edge.oY), static_cast<float>(edge.oZ)};
                     pos[edge.axis] += (static_cast<float>(ctx.iso) - v1) / (v2 - v1);
@@ -872,7 +872,7 @@ namespace dualmc
 
 		static uint32_t CalculateLinearIndex(int32_t x, int32_t y, int32_t z, const int3& dims) noexcept
 		{
-			return x + dims.x * (y + dims.y * z);
+			return static_cast<uint32_t>(x + dims.x * (y + dims.y * z));
 		}
 
 		inline std::pair<bool,bool> GetStatus(const Context& ctx,int32_t x, int32_t y, int32_t z, int32_t xOffset, int32_t yOffset, int32_t zOffset) const

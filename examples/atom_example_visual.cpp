@@ -19,7 +19,16 @@
 // stl includes
 #include <vector>
 
+#define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
 // dual mc builder vertex and quad definitions
+#define TYPE_VEC2(x) glm::vec<2, x>
+#define TYPE_VEC3(x) glm::vec<3, x>
+#define TYPE_VEC3_NORMALIZED(v) glm::normalize(v)
 #include <dmc/dualmc.hpp>
 
 #include <daxa/daxa.hpp>
@@ -30,12 +39,6 @@
 #include <GLFW/glfw3.h>
 
 #include <array>
-
-#define GLM_FORCE_RADIANS
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#define GLM_ENABLE_EXPERIMENTAL
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
 
 using std::chrono::high_resolution_clock;
 using std::chrono::duration;

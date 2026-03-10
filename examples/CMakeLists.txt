@@ -15,6 +15,7 @@ function(ADD_EXAMPLE name)
     endif()
 
     target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
+    target_compile_features(${name} PRIVATE cxx_std_23)
 
     set_target_properties(${name} PROPERTIES FOLDER "Examples")
     if (MSVC)
@@ -34,10 +35,10 @@ endfunction()
 file(
   DOWNLOAD
   https://github.com/cpm-cmake/CPM.cmake/releases/download/v0.42.0/CPM.cmake
-  ${CMAKE_CURRENT_BINARY_DIR}/cmake/CPM.cmake
+  ${CMAKE_BINARY_DIR}/cmake/CPM.cmake
   EXPECTED_HASH SHA256=2020b4fc42dba44817983e06342e682ecfc3d2f484a581f11cc5731fbe4dce8a
 )
-include(${CMAKE_CURRENT_BINARY_DIR}/cmake/CPM.cmake)
+include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
 
 CPMAddPackage(
   NAME daxa
